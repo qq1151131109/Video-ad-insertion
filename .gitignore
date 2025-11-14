@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 环境变量（包含敏感信息）
+.env
+
+# 缓存和临时文件
+cache/
+output/debug/
+output/logs/
+*.log
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 模型文件（大文件）
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+models/
+
+# Whisper模型
+whisper_models/
+
+# 媒体文件（避免提交大文件）
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mov
+*.flv
+
+# 但保留示例文件
+!docs/**/*.mp4
+!docs/**/*.mp3
