@@ -54,7 +54,7 @@ class VoiceCloneService:
         output_audio_path: str,
         emotion: str = "neutral",
         speed: float = 1.0,
-        output_node_id: str = "9",  # 根据实际workflow调整
+        output_node_id: str = "173",  # SaveAudioMP3节点
         timeout: int = 300
     ) -> str:
         """
@@ -112,7 +112,8 @@ class VoiceCloneService:
                 workflow=workflow,
                 output_node_id=output_node_id,
                 output_path=str(output_path),
-                timeout=timeout
+                timeout=timeout,
+                file_type='audio'  # 声音克隆输出音频文件
             )
 
             logger.success(f"✓ 声音克隆完成: {output_path.name}")

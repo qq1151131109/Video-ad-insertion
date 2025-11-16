@@ -166,7 +166,8 @@ class LLMService:
         context_before: str,
         context_after: str,
         ad_config: AdConfig,
-        transition_hint: Optional[str] = None
+        transition_hint: Optional[str] = None,
+        language: str = "zh"
     ) -> str:
         """
         根据视频上下文生成广告词
@@ -179,51 +180,82 @@ class LLMService:
             context_after: 插入点后文
             ad_config: 广告配置
             transition_hint: 过渡提示
+            language: 视频语言（zh/en/ja等，默认中文）
 
         Returns:
             生成的广告词
         """
-        logger.info(f"生成广告词: 产品={ad_config.product}")
+        logger.info(f"生成广告词: 产品={ad_config.product}, 语言={language}")
 
         # 获取适合的模板
         template = ad_config.get_template(video_category)
 
+        # 根据语言设置长度要求
+        if language.startswith("zh") or language.startswith("cn"):
+            length_requirement = "15-30字"
+            language_name = "中文"
+        elif language.startswith("en"):
+            length_requirement = "5-15 words"
+            language_name = "English"
+        elif language.startswith("ja"):
+            length_requirement = "15-30文字"
+            language_name = "日本語"
+        elif language.startswith("ko"):
+            length_requirement = "15-30자"
+            language_name = "한국어"
+        else:
+            # 默认按中文处理
+            length_requirement = "15-30字"
+            language_name = language
+
         # 构建提示词
-        system_prompt = """你是一个专业的广告文案撰写师，擅长创作自然、不突兀的软性广告。
+        system_prompt = f"""You are a creative ad copywriter who excels at creating humorous, contextual soft advertisements in {language_name}.
 
-你的任务是：
-1. 根据视频的上下文，生成一段广告词
-2. 广告词要自然融入视频内容，不能让人感觉突兀
-3. 要体现产品的核心卖点
-4. 保持与视频相同的语气风格
-5. 长度控制在15-30字"""
+Your specialty is making ads that:
+1. Seamlessly blend with the video content (viewers barely notice it's an ad)
+2. Use clever wordplay, humor, or wit related to the video topic
+3. Create a natural transition that feels like part of the conversation
+4. Are engaging and entertaining, not salesy or pushy
+5. Highlight product benefits in a fun, relatable way
 
-        user_prompt = f"""视频信息：
-- 主题: {video_theme}
-- 类别: {video_category}
-- 语气: {video_tone}
+Style guidelines:
+- Be conversational and friendly
+- Use humor when appropriate (puns, clever analogies, playful language)
+- Reference the video context directly
+- Make it feel like a natural aside or helpful tip from a friend
+- Avoid corporate jargon or overly formal language"""
 
-广告产品：
-- 名称: {ad_config.product}
-- 卖点: {ad_config.get_selling_points_text()}
+        user_prompt = f"""Video Context:
+- Theme: {video_theme}
+- Category: {video_category}
+- Tone: {video_tone}
+- Target Audience: {ad_config.product} users
 
-插入点上下文：
-前文: {context_before}
-后文: {context_after}
-{f'过渡提示: {transition_hint}' if transition_hint else ''}
+What was just said (before insertion point):
+"{context_before}"
 
-参考模板（可调整）：
-{template}
+What comes next (after insertion point):
+"{context_after}"
+
+{f'Suggested transition approach: {transition_hint}' if transition_hint else ''}
+
+Product to mention:
+- Name: {ad_config.product}
+- Key Benefits: {ad_config.get_selling_points_text()}
 
 ---
 
-请生成一段自然的广告词，要求：
-1. 长度15-30字
-2. 与上下文自然衔接
-3. 突出产品卖点
-4. 保持视频的语气风格
+Create a humorous, contextual ad script that:
+1. References something from the "before" context to create a smooth transition
+2. Adds humor, wit, or a clever connection to the video topic
+3. Naturally introduces {ad_config.product} as a solution or enhancement
+4. Keeps the tone consistent with the video ({video_tone})
+5. Length: {length_requirement}
+6. Language: {language_name} ONLY
 
-请只返回广告词文本，不要包含任何解释或标记。"""
+Example approach: "Speaking of [topic from video]... you know what would make this even better? [Product benefit with a playful twist]"
+
+Return ONLY the ad script - no explanations, markers, or meta-commentary."""
 
         try:
             # 调用OpenAI API
@@ -233,8 +265,8 @@ class LLMService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.8,
-                max_tokens=100
+                temperature=0.9,  # 提高创造力，生成更幽默的内容
+                max_tokens=16384  # gpt-4o-mini最大支持16384 tokens（约12288个汉字或49152个英文字符）
             )
 
             # 提取广告词

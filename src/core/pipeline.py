@@ -12,13 +12,16 @@ from src.core.video_processor import VideoProcessor
 from src.core.audio_separator import AudioSeparator
 from src.core.asr import ASRService
 from src.core.face_detector import FaceDetector
-from src.services.llm_service import LLMService
+from src.core.speaker_detector import SpeakerDetector, VideoSceneType, SpeakerProfile
+from src.services.llm_service import LLMService, InsertionPoint
 from src.config.ads import AdsManager
 from src.core.ad_orchestrator import AdVideoOrchestrator
 from src.core.video_composer import VideoComposer
 from src.utils.file_manager import TempFileManager
 from src.utils.logger import logger
 from src.config.settings import settings
+import numpy as np
+import cv2
 
 
 @dataclass
@@ -50,6 +53,7 @@ class VideoPipeline:
         self.audio_separator = AudioSeparator(model="htdemucs")
         self.asr_service = ASRService(model_name="medium")  # 使用medium模型平衡质量和速度
         self.face_detector = FaceDetector()
+        self.speaker_detector = SpeakerDetector(self.face_detector)  # 主讲人检测器
         self.llm_service = LLMService()
         self.ads_manager = AdsManager()
         self.ad_orchestrator = AdVideoOrchestrator()
@@ -155,11 +159,12 @@ class VideoPipeline:
                 logger.info("\n[1/2] 语音识别...")
                 transcription = self.asr_service.transcribe(
                     audio_path=audio_path,
-                    language="zh",
+                    language=None,  # 自动检测语言
                     word_timestamps=True
                 )
 
                 logger.success(f"  ✓ 识别完成: {len(transcription.segments)}个片段")
+                logger.info(f"  检测语言: {transcription.language}")
                 logger.info(f"  文本预览: {transcription.full_text[:100]}...")
 
                 # 保存转录结果
@@ -193,49 +198,127 @@ class VideoPipeline:
                 logger.info(f"  找到{len(analysis.insertion_points)}个插入点候选")
 
                 # ============================================================
-                # 阶段3: 广告准备
+                # 阶段2.5: 场景分析（新增）
+                # ============================================================
+                logger.info("\n" + "=" * 80)
+                logger.info("阶段2.5: 场景分析")
+                logger.info("=" * 80)
+
+                scene = self.speaker_detector.analyze_video_scene(
+                    video_path,
+                    metadata.duration
+                )
+
+                if not scene.is_single_speaker:
+                    logger.warning(
+                        f"⚠️ 视频不是单人口播场景\n"
+                        f"  有人脸的帧: {scene.frames_with_faces}/{scene.total_sampled_frames}\n"
+                        f"  检测到讲者数: {scene.unique_speakers}"
+                    )
+                    logger.warning("将尝试继续处理，但效果可能不佳")
+
+                # ============================================================
+                # 阶段3: 广告准备（智能版）
                 # ============================================================
                 logger.info("\n" + "=" * 80)
                 logger.info("阶段3: 广告准备")
                 logger.info("=" * 80)
 
-                # 3.1 选择插入点（使用第一个候选）
+                # 3.1 智能选择插入点（三级策略）
                 if not analysis.insertion_points:
                     raise Exception("LLM未找到合适的插入点")
 
-                insertion_point = analysis.insertion_points[0]
-                logger.info(f"\n[1/5] 选择插入点: {insertion_point.time:.1f}秒 (优先级{insertion_point.priority})")
-                logger.info(f"  理由: {insertion_point.reason}")
+                logger.info("\n[1/5] 智能选择插入点（人脸优先）...")
 
-                # 3.2 提取关键帧
-                logger.info("\n[2/5] 提取关键帧...")
-                with VideoProcessor(str(video_path)) as processor:
-                    keyframe, actual_time = processor.extract_best_frame_around_time(
-                        target_time=insertion_point.time,
-                        window_size=2.0,
-                        num_candidates=10
+                # 策略1: 在LLM推荐的点中找有主讲人的
+                insertion_point, keyframe, insertion_time = self._select_insertion_with_speaker(
+                    analysis.insertion_points,
+                    video_path,
+                    metadata,
+                    scene.speaker_profile
+                )
+
+                if insertion_point is None and scene.speaker_profile:
+                    # 策略2: 如果LLM推荐的点都没人，使用主讲人的最佳帧
+                    logger.warning("LLM推荐的插入点均无合适人脸，使用主讲人最佳画面")
+                    keyframe = scene.speaker_profile.best_frame
+                    insertion_time = scene.speaker_profile.best_frame_time
+                    insertion_point = analysis.insertion_points[0]  # 语义上仍用第一个点
+
+                    logger.success(
+                        f"✓ 使用主讲人最佳画面\n"
+                        f"  时间: {insertion_time:.1f}s\n"
+                        f"  人脸置信度: {scene.speaker_profile.confidence_avg:.3f}"
+                    )
+                elif insertion_point is None:
+                    # 策略3: 完全找不到合适的人脸
+                    raise Exception(
+                        "无法找到合适的插入点：\n"
+                        "  - LLM推荐的点均无人脸\n"
+                        "  - 视频中未识别到主讲人\n"
+                        "建议：请使用单人口播类型的视频"
                     )
 
-                # 保存关键帧
-                import cv2
+                logger.info(f"  最终插入时间: {insertion_time:.1f}秒")
+                logger.info(f"  理由: {insertion_point.reason}")
+
+                # 3.2 提取插入点附近的音频片段用于声音克隆（5-10秒）
+                logger.info("\n[2/5] 提取插入点附近音频片段（声音克隆参考）...")
+
+                # 计算音频片段范围：插入点前后各2.5-5秒
+                audio_clip_duration = 10.0  # 总共10秒
+                clip_start = max(0, insertion_time - audio_clip_duration / 2)
+                clip_end = min(metadata.duration, insertion_time + audio_clip_duration / 2)
+
+                # 如果接近视频开头或结尾,调整范围保证至少5秒
+                min_clip_duration = 5.0
+                if clip_end - clip_start < min_clip_duration:
+                    if clip_start == 0:
+                        clip_end = min(min_clip_duration, metadata.duration)
+                    else:
+                        clip_start = max(0, metadata.duration - min_clip_duration)
+
+                logger.info(f"  音频片段范围: {clip_start:.1f}s ~ {clip_end:.1f}s (时长: {clip_end - clip_start:.1f}s)")
+
+                # 提取音频片段
+                reference_audio_clip_path = file_mgr.base_dir / "audio" / "reference_clip.wav"
+                with VideoProcessor(str(video_path)) as processor:
+                    processor.extract_audio(
+                        str(reference_audio_clip_path),
+                        start_time=clip_start,
+                        end_time=clip_end
+                    )
+
+                # 对音频片段进行人声分离
+                logger.info("  分离音频片段中的人声...")
+                reference_vocals_clip_path = file_mgr.base_dir / "audio" / "reference_vocals_clip.wav"
+                self.audio_separator.separate_simple(
+                    audio_path=str(reference_audio_clip_path),
+                    output_path=str(reference_vocals_clip_path),
+                    device=device
+                )
+
+                logger.success(f"  ✓ 声音克隆参考音频已准备: {clip_end - clip_start:.1f}秒纯净人声")
+
+                # 3.3 保存关键帧
+                logger.info("\n[3/6] 保存关键帧...")
+                from PIL import Image
                 keyframe_path = file_mgr.get_keyframe_path("insertion_keyframe.jpg")
-                cv2.imwrite(str(keyframe_path), keyframe)
+                Image.fromarray(keyframe).save(str(keyframe_path), quality=95)
+                logger.success("  ✓ 关键帧已保存（将作为数字人第一帧）")
 
-                logger.success(f"  ✓ 关键帧已提取: {actual_time:.2f}秒")
-
-                # 3.3 人脸检测和质量评估
-                logger.info("\n[3/5] 人脸检测...")
+                # 3.4 确认人脸质量
+                logger.info("\n[4/6] 确认人脸质量...")
                 faces = self.face_detector.detect_faces(keyframe)
-
-                if not faces:
-                    logger.warning("  ⚠️  未检测到人脸，继续使用原关键帧")
-                else:
-                    best_face = self.face_detector.get_best_face(keyframe)
+                if faces:
+                    best_face = max(faces, key=lambda f: f.confidence)
                     logger.success(f"  ✓ 检测到{len(faces)}个人脸")
                     logger.info(f"  最佳人脸置信度: {best_face.confidence:.3f}")
+                else:
+                    logger.warning("  ⚠️ 未检测到人脸（已是最优选择）")
 
-                # 3.4 选择广告
-                logger.info("\n[4/5] 选择广告...")
+                # 3.5 选择广告
+                logger.info("\n[5/6] 选择广告...")
                 ad = self.ads_manager.select_ad_for_video(analysis.theme)
 
                 if not ad:
@@ -245,8 +328,8 @@ class VideoPipeline:
                 logger.info(f"  产品: {ad.product}")
                 logger.info(f"  卖点: {ad.get_selling_points_text()}")
 
-                # 3.5 生成广告词
-                logger.info("\n[5/5] 生成广告词...")
+                # 3.6 生成广告词
+                logger.info("\n[6/6] 生成广告词...")
                 ad_script = self.llm_service.generate_ad_script(
                     video_theme=analysis.theme,
                     video_category=analysis.category,
@@ -254,7 +337,8 @@ class VideoPipeline:
                     context_before=insertion_point.context_before,
                     context_after=insertion_point.context_after,
                     ad_config=ad,
-                    transition_hint=insertion_point.transition_hint
+                    transition_hint=insertion_point.transition_hint,
+                    language=transcription.language  # 使用检测到的语言
                 )
 
                 logger.success("  ✓ 广告词生成完成")
@@ -273,9 +357,11 @@ class VideoPipeline:
 
                 ad_result = self.ad_orchestrator.generate_ad_video_simple(
                     keyframe_image_path=str(keyframe_path),
-                    reference_audio_path=vocals_path,
+                    reference_audio_path=str(reference_vocals_clip_path),  # 使用插入点附近的音频片段
                     ad_script=ad_script,
-                    output_dir=str(ad_output_dir)
+                    output_dir=str(ad_output_dir),
+                    video_width=None,  # 禁用图片缩放以保持最高画质
+                    video_height=None  # 禁用图片缩放以保持最高画质
                 )
 
                 if not ad_result.success:
@@ -395,3 +481,106 @@ class VideoPipeline:
         logger.info(f"平均: {total_time/len(results)/60:.1f}分钟/视频")
 
         return results
+
+    def _select_insertion_with_speaker(
+        self,
+        candidate_points: list[InsertionPoint],
+        video_path: Path,
+        metadata,
+        speaker_profile: Optional[SpeakerProfile]
+    ) -> tuple[Optional[InsertionPoint], Optional[np.ndarray], float]:
+        """
+        在候选点中选择有主讲人的插入点
+
+        Returns:
+            (插入点, 关键帧, 时间) 或 (None, None, 0.0) 如果都不合适
+        """
+        logger.info(f"评估 {len(candidate_points)} 个候选插入点...")
+
+        scored_points = []
+
+        cap = cv2.VideoCapture(str(video_path))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        for point in candidate_points:
+            # 提取插入点的前一帧（这将作为数字人视频的第一帧）
+            frame_number = int(point.time * fps) - 1
+            cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_number))
+            ret, frame = cap.read()
+
+            if not ret:
+                logger.debug(f"  候选点 {point.time:.1f}s: 无法读取帧")
+                continue
+
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # 检测人脸
+            faces = self.face_detector.detect_faces(frame_rgb)
+
+            if not faces:
+                logger.info(f"  候选点 {point.time:.1f}s: ❌ 无人脸")
+                continue
+
+            # 如果有主讲人档案，检查是否匹配
+            if speaker_profile:
+                is_main_speaker, best_face = self.speaker_detector.is_main_speaker_in_frame(
+                    frame_rgb,
+                    speaker_profile
+                )
+
+                if not is_main_speaker:
+                    logger.info(
+                        f"  候选点 {point.time:.1f}s: ⚠️ 有人脸但不是主讲人"
+                    )
+                    continue
+
+                # 综合评分：语义优先级 + 人脸质量
+                semantic_score = (4 - point.priority) / 3  # priority 1->1.0, 2->0.66, 3->0.33
+                face_score = best_face.confidence
+                combined_score = semantic_score * 0.4 + face_score * 0.6
+
+                scored_points.append({
+                    'point': point,
+                    'frame': frame_rgb,
+                    'score': combined_score,
+                    'face_confidence': face_score
+                })
+
+                logger.success(
+                    f"  候选点 {point.time:.1f}s: ✓ 主讲人画面 "
+                    f"(置信度={face_score:.3f}, 综合分={combined_score:.3f})"
+                )
+            else:
+                # 没有主讲人档案，只要有人脸就行
+                best_face = max(faces, key=lambda f: f.confidence)
+                semantic_score = (4 - point.priority) / 3
+                combined_score = semantic_score * 0.5 + best_face.confidence * 0.5
+
+                scored_points.append({
+                    'point': point,
+                    'frame': frame_rgb,
+                    'score': combined_score,
+                    'face_confidence': best_face.confidence
+                })
+
+                logger.info(
+                    f"  候选点 {point.time:.1f}s: ✓ 有人脸 "
+                    f"(置信度={best_face.confidence:.3f})"
+                )
+
+        cap.release()
+
+        if not scored_points:
+            logger.warning("⚠️ 所有候选点均无合适人脸")
+            return None, None, 0.0
+
+        # 选择得分最高的
+        best = max(scored_points, key=lambda x: x['score'])
+
+        logger.success(
+            f"✓ 选中插入点: {best['point'].time:.1f}s "
+            f"(人脸置信度={best['face_confidence']:.3f})"
+        )
+
+        return best['point'], best['frame'], best['point'].time
+

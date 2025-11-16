@@ -53,7 +53,7 @@ class ImageCleanerService:
         output_image_path: str,
         prompt: str = "去除图片中的文字、水印和干扰元素，保持人物和背景清晰自然",
         negative_prompt: str = "文字、水印、logo、字幕",
-        output_node_id: str = "9",  # 根据实际workflow调整
+        output_node_id: str = "60",  # SaveImage节点
         timeout: int = 300
     ) -> str:
         """

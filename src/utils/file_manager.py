@@ -253,12 +253,92 @@ class TempFileManager:
         """上下文管理器入口"""
         return self
 
+    def _save_debug_artifacts(self):
+        """
+        保存所有中间结果到output/debug目录，便于排查问题
+
+        输出结构:
+        output/debug/{video_id}_{timestamp}/
+        ├── README.txt          - 文件说明
+        ├── audio/              - 音频文件
+        │   ├── original.wav    - 原始音频
+        │   └── vocals.wav      - 人声分离结果
+        ├── keyframes/          - 关键帧图片
+        │   └── *.jpg
+        ├── transcriptions/     - ASR转写结果
+        │   └── transcription.json
+        ├── ad_materials/       - 广告素材
+        │   ├── cleaned_image.jpg  - 清洗后的图片
+        │   ├── ad_audio.mp3       - 广告音频
+        │   └── ad_video.mp4       - 广告视频
+        └── videos/             - 视频文件
+            └── final.mp4       - 最终输出视频
+        """
+        if not self.base_dir.exists():
+            return
+
+        # 创建debug输出目录 (带时间戳)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        debug_dir = settings.OUTPUT_DIR / "debug" / f"{self.video_id}_{timestamp}"
+
+        try:
+            # 复制整个cache目录
+            if self.base_dir.exists():
+                shutil.copytree(self.base_dir, debug_dir, dirs_exist_ok=True)
+
+                # 生成README
+                readme_path = debug_dir / "README.txt"
+                readme_content = f"""视频处理中间结果
+===================
+
+视频ID: {self.video_id}
+处理时间: {timestamp}
+
+目录说明:
+---------
+audio/              - 音频文件
+  original.wav      - 从视频提取的原始音频
+  vocals.wav        - Demucs分离的人声
+
+keyframes/          - 关键帧图片
+  insertion_keyframe.jpg  - 广告插入点的关键帧
+
+transcriptions/     - ASR转写结果
+  transcription.json      - Whisper语音识别结果（含时间戳）
+  content_analysis.json   - LLM内容分析结果
+
+ad_materials/       - 广告素材
+  cleaned_image.jpg       - 清洗后的关键帧（去除文字水印）
+  ad_audio.mp3            - 生成的广告配音
+
+ad_video/           - 广告视频
+  digital_human.mp4       - 生成的数字人广告视频
+
+videos/             - 其他视频文件
+  final.mp4               - 最终合成的带广告视频
+
+提示:
+-----
+- 如果某个目录为空，说明该步骤未执行或执行失败
+- 检查日志文件了解详细错误信息
+- 使用VLC等播放器查看视频和音频文件
+"""
+                readme_path.write_text(readme_content, encoding='utf-8')
+
+                logger.info(f"✓ 中间结果已保存: {debug_dir}")
+
+        except Exception as e:
+            logger.warning(f"保存中间结果失败: {e}")
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器退出"""
-        # 如果发生异常且配置为保留文件，则不清理
+        # 无论成功失败，都保存中间结果到output目录以便调试
+        self._save_debug_artifacts()
+
+        # 如果发生异常且配置为保留文件，则不清理cache
         if exc_type is not None and settings.KEEP_TEMP_FILES_ON_ERROR:
             logger.warning(f"发生错误，保留临时文件: {self.base_dir}")
         else:
-            # 正常完成或配置为不保留，则清理
+            # 正常完成或配置为不保留，则清理cache
             if exc_type is None:
                 self.cleanup(keep_on_error=False)

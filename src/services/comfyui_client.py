@@ -48,12 +48,13 @@ class ComfyUIClient:
             Exception: 上传失败
         """
         file_path = Path(file_path)
-        # 根据扩展名选择上传端点与字段
+        # ComfyUI使用统一的/upload/image端点上传所有文件（包括音频）
+        # 但是字段名需要根据文件类型选择
         ext = file_path.suffix.lower()
         is_audio = ext in {".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"}
-        field_name = "audio" if is_audio else "image"
-        endpoint = "audio" if is_audio else "image"
-        url = f"{self.base_url}/upload/{endpoint}"
+        # 注意：即使是音频文件，也使用image字段名上传到/upload/image端点
+        field_name = "image"  # ComfyUI统一使用image字段
+        url = f"{self.base_url}/upload/image"
 
         if not file_path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -69,9 +70,18 @@ class ComfyUIClient:
                 data['subfolder'] = subfolder
 
             response = self._request("POST", url, files=files, data=data)
-            result = response.json()
 
-            logger.success(f"✓ 文件上传成功: {result['name']} ({field_name})")
+            # 调试：记录响应内容
+            try:
+                result = response.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON解析失败: {e}")
+                logger.error(f"响应状态码: {response.status_code}")
+                logger.error(f"响应头: {response.headers}")
+                logger.error(f"响应内容（前500字符）: {response.text[:500]}")
+                raise
+
+            logger.success(f"✓ 文件上传成功: {result['name']} ({'audio' if is_audio else 'image'})")
             return result
         finally:
             f.close()
@@ -103,7 +113,16 @@ class ComfyUIClient:
         logger.info(f"提交workflow任务 (client_id={client_id})")
 
         response = self._request("POST", url, json=payload)
-        result = response.json()
+
+        # 调试：记录响应内容
+        try:
+            result = response.json()
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析失败: {e}")
+            logger.error(f"响应状态码: {response.status_code}")
+            logger.error(f"响应头: {response.headers}")
+            logger.error(f"响应内容（前500字符）: {response.text[:500]}")
+            raise
 
         # 检查节点错误
         if result.get('node_errors'):
@@ -131,7 +150,17 @@ class ComfyUIClient:
         url = f"{self.base_url}/history/{prompt_id}"
 
         response = self._request("GET", url)
-        history = response.json()
+
+        # 调试：记录响应内容
+        try:
+            history = response.json()
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析失败: {e}")
+            logger.error(f"响应状态码: {response.status_code}")
+            logger.error(f"响应头: {response.headers}")
+            logger.error(f"响应内容（前500字符）: {response.text[:500]}")
+            raise
+
         return history.get(prompt_id, {})
 
     def wait_for_completion(

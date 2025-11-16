@@ -54,7 +54,9 @@ class DigitalHumanService:
         output_video_path: str,
         fps: int = 25,
         quality: str = "high",
-        output_node_id: str = "9",  # 根据实际workflow调整
+        target_width: Optional[int] = None,  # 目标宽度（匹配原视频）
+        target_height: Optional[int] = None,  # 目标高度（匹配原视频）
+        output_node_id: str = "307",  # VHS_VideoCombine节点
         timeout: int = 600
     ) -> str:
         """
@@ -117,7 +119,9 @@ class DigitalHumanService:
                 image_filename=image_filename,
                 audio_filename=audio_filename,
                 fps=fps,
-                quality=quality
+                quality=quality,
+                target_width=target_width,
+                target_height=target_height
             )
 
             # 4. 执行workflow并下载结果
@@ -128,7 +132,8 @@ class DigitalHumanService:
                 workflow=workflow,
                 output_node_id=output_node_id,
                 output_path=str(output_path),
-                timeout=timeout
+                timeout=timeout,
+                file_type='gifs'  # 数字人workflow输出GIF格式视频
             )
 
             logger.success(f"✓ 数字人视频生成完成: {output_path.name}")
@@ -144,12 +149,14 @@ class DigitalHumanService:
         image_filename: str,
         audio_filename: str,
         fps: int,
-        quality: str
+        quality: str,
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         准备workflow（替换参数）
 
-        根据新的workflow结构（InfiniteTalk数字人-图生视频-API-1114.json）：
+        根据新的workflow结构（InfiniteTalk数字人图生视频-API-111502.json）：
         - 节点326: LoadImage - 输入图片
         - 节点125: LoadAudio - 输入音频
         - 节点306: MultiTalkWav2VecEmbeds - fps参数
@@ -199,6 +206,35 @@ class DigitalHumanService:
                 if "inputs" in node and "frame_rate" in node["inputs"]:
                     node["inputs"]["frame_rate"] = fps
                     logger.debug(f"设置视频合成帧率: {fps} (节点{node_id})")
+
+            # LayerUtility: ImageScaleByAspectRatio V2节点 - 设置分辨率（带OOM保护）
+            elif class_type == "LayerUtility: ImageScaleByAspectRatio V2":
+                if target_width and target_height and "inputs" in node:
+                    # OOM保护：控制短边最大为480（避免显存溢出）
+                    # InfiniteTalk生成81帧视频，高分辨率会导致GPU OOM
+                    MIN_EDGE_LIMIT = 480
+
+                    # 计算短边和长边
+                    original_min_edge = min(target_width, target_height)
+                    original_max_edge = max(target_width, target_height)
+
+                    # 如果短边超过限制，按短边缩放
+                    if original_min_edge > MIN_EDGE_LIMIT:
+                        # 计算缩放比例（基于短边）
+                        scale_ratio = MIN_EDGE_LIMIT / original_min_edge
+                        # 计算缩放后的长边
+                        scaled_max_edge = int(original_max_edge * scale_ratio)
+                        # LayerUtility节点使用长边作为scale_to_length
+                        scale_to_length = scaled_max_edge
+
+                        logger.warning(f"⚠️  原分辨率短边{original_min_edge}过大，缩小到短边{MIN_EDGE_LIMIT}以避免GPU OOM")
+                        logger.info(f"原尺寸: {target_width}x{target_height} → 缩放后约: {int(target_width * scale_ratio)}x{int(target_height * scale_ratio)}")
+                    else:
+                        # 不需要缩放，使用原始长边
+                        scale_to_length = original_max_edge
+
+                    node["inputs"]["scale_to_length"] = scale_to_length
+                    logger.info(f"设置图片缩放尺寸: {scale_to_length} (原{target_width}x{target_height})")
 
         return workflow
 

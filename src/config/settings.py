@@ -73,8 +73,8 @@ class Settings(BaseSettings):
     # 广告配置
     # ==============================================================================
     AD_PRODUCT: str = "NVIDIA算力"
-    AD_SCRIPT_MIN_LENGTH: int = 15  # 广告词最小字数
-    AD_SCRIPT_MAX_LENGTH: int = 20  # 广告词最大字数
+    AD_SCRIPT_MIN_LENGTH: int = 10  # 广告词最小字数（降低以适应英文）
+    AD_SCRIPT_MAX_LENGTH: int = 20000  # 广告词最大字数（大幅增加以容纳任意长度文本）
     AD_VIDEO_MIN_DURATION: float = 3.0  # 广告视频最小时长（秒）
     AD_VIDEO_MAX_DURATION: float = 5.0  # 广告视频最大时长（秒）
 

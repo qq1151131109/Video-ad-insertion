@@ -54,7 +54,9 @@ class AdVideoOrchestrator:
         clean_image: bool = True,
         emotion: str = "neutral",
         speed: float = 1.0,
-        fps: int = 25
+        fps: int = 25,
+        video_width: Optional[int] = None,  # 原视频宽度
+        video_height: Optional[int] = None  # 原视频高度
     ) -> AdVideoResult:
         """
         生成广告视频（完整流程）
@@ -165,7 +167,9 @@ class AdVideoOrchestrator:
                         audio_path=cloned_audio_path,
                         output_video_path=digital_human_video_path,
                         fps=fps,
-                        quality="high"
+                        quality="high",
+                        target_width=video_width,
+                        target_height=video_height
                     )
                     break
                 except Exception as e:
@@ -211,7 +215,9 @@ class AdVideoOrchestrator:
         keyframe_image_path: str,
         reference_audio_path: str,
         ad_script: str,
-        output_dir: str
+        output_dir: str,
+        video_width: Optional[int] = None,
+        video_height: Optional[int] = None
     ) -> AdVideoResult:
         """
         简化的广告视频生成接口（使用默认参数）
@@ -221,6 +227,8 @@ class AdVideoOrchestrator:
             reference_audio_path: 参考音频路径
             ad_script: 广告词
             output_dir: 输出目录
+            video_width: 原视频宽度（用于匹配分辨率）
+            video_height: 原视频高度（用于匹配分辨率）
 
         Returns:
             生成结果
@@ -233,7 +241,9 @@ class AdVideoOrchestrator:
             clean_image=True,
             emotion="neutral",
             speed=1.0,
-            fps=25
+            fps=25,
+            video_width=video_width,
+            video_height=video_height
         )
 
     @staticmethod

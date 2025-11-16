@@ -103,13 +103,21 @@ class VideoProcessor:
             logger.error(f"元数据提取失败: {e}")
             raise
 
-    def extract_audio(self, output_path: str, fps: int = 44100) -> str:
+    def extract_audio(
+        self,
+        output_path: str,
+        fps: int = 44100,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None
+    ) -> str:
         """
-        提取音频轨道
+        提取音频轨道（支持片段提取）
 
         Args:
             output_path: 输出音频文件路径
             fps: 音频采样率（默认44100Hz）
+            start_time: 起始时间（秒），None表示从头开始
+            end_time: 结束时间（秒），None表示到结尾
 
         Returns:
             输出文件路径
@@ -117,7 +125,10 @@ class VideoProcessor:
         Raises:
             Exception: 提取失败或视频无音频
         """
-        logger.info("提取音频轨道...")
+        if start_time is None and end_time is None:
+            logger.info("提取音频轨道...")
+        else:
+            logger.info(f"提取音频片段: {start_time:.1f}s ~ {end_time:.1f}s")
 
         output_path = Path(output_path)
 
@@ -131,8 +142,16 @@ class VideoProcessor:
             # 确保输出目录存在
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
+            # 获取音频片段
+            if start_time is not None or end_time is not None:
+                # 先对视频进行时间切片,再提取音频
+                video_segment = self.video_clip.subclipped(start_time, end_time)
+                audio_clip = video_segment.audio
+            else:
+                audio_clip = self.video_clip.audio
+
             # 提取音频
-            self.video_clip.audio.write_audiofile(
+            audio_clip.write_audiofile(
                 str(output_path),
                 fps=fps,
                 codec='pcm_s16le',  # WAV格式
@@ -168,7 +187,7 @@ class VideoProcessor:
 
         logger.debug(f"提取帧: t={timestamp}s")
 
-        # 提取帧
+        # 提取帧（MoviePy返回RGB格式）
         frame = self.video_clip.get_frame(timestamp)
 
         # 保存（如果指定路径）
@@ -176,9 +195,10 @@ class VideoProcessor:
             output_path = Path(output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # 转换为BGR（OpenCV格式）并保存
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(str(output_path), frame_bgr)
+            # 使用PIL保存RGB格式图像
+            from PIL import Image
+            image = Image.fromarray(frame)  # frame是RGB格式
+            image.save(str(output_path), quality=95)
             logger.debug(f"帧已保存: {output_path}")
 
         return frame
