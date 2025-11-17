@@ -59,7 +59,7 @@ class DigitalHumanService:
         target_width: Optional[int] = None,  # 目标宽度（匹配原视频）
         target_height: Optional[int] = None,  # 目标高度（匹配原视频）
         output_node_id: str = "385",  # VHS_VideoCombine节点（111603版本）
-        timeout: int = 1200
+        timeout: int = 3600  # 增加到60分钟，InfiniteTalk生成81帧需要较长时间
     ) -> str:
         """
         生成数字人视频

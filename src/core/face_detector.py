@@ -78,7 +78,8 @@ class FaceDetector:
             try:
                 from mtcnn import MTCNN
                 logger.info("加载MTCNN人脸检测器...")
-                self._detector = MTCNN(min_face_size=self.min_face_size)
+                # MTCNN不接受min_face_size参数，我们在后处理时过滤
+                self._detector = MTCNN()
                 logger.success("✓ MTCNN已加载")
             except ImportError:
                 logger.error("✗ MTCNN未安装，请运行: pip install mtcnn")
@@ -103,12 +104,19 @@ class FaceDetector:
         # 检测人脸
         detections = self._detector.detect_faces(image_rgb)
 
-        # 过滤低置信度
+        # 过滤低置信度和小人脸
         faces = []
         for det in detections:
             confidence = det['confidence']
             if confidence >= self.confidence_threshold:
                 bbox = det['box']  # [x, y, width, height]
+
+                # 检查人脸大小
+                face_width = bbox[2]
+                face_height = bbox[3]
+                if face_width < self.min_face_size or face_height < self.min_face_size:
+                    continue  # 跳过太小的人脸
+
                 # 转换为 [x1, y1, x2, y2]
                 bbox = [bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]]
 

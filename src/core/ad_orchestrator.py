@@ -7,6 +7,7 @@
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+import torch
 
 from src.services.comfyui_client import ComfyUIClient
 from src.services.image_cleaner import ImageCleanerService
@@ -123,6 +124,12 @@ class AdVideoOrchestrator:
                 logger.info("\n跳过图片清洗，直接使用原图")
                 cleaned_image_path = keyframe_image_path
 
+            # 清理GPU显存
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.debug("  ✓ GPU显存已清理")
+
             # Step 2: 克隆声音
             logger.info("\n" + "=" * 60)
             logger.info("Step 2/3: 克隆声音生成广告配音")
@@ -151,6 +158,12 @@ class AdVideoOrchestrator:
                 raise last_err
 
             logger.success("✓ Step 2 完成: 声音克隆")
+
+            # 清理GPU显存
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.debug("  ✓ GPU显存已清理")
 
             # Step 3: 生成数字人视频
             logger.info("\n" + "=" * 60)
@@ -181,6 +194,46 @@ class AdVideoOrchestrator:
                 raise last_err
 
             logger.success("✓ Step 3 完成: 数字人生成")
+
+            # 清理GPU显存
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.debug("  ✓ GPU显存已清理")
+
+            # 剪掉最后1秒的停顿
+            logger.info("\n后处理: 移除视频末尾停顿...")
+            try:
+                import subprocess
+                # 获取视频时长
+                probe_cmd = [
+                    'ffprobe', '-v', 'error',
+                    '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    digital_human_video_path
+                ]
+                duration_str = subprocess.check_output(probe_cmd, text=True).strip()
+                duration = float(duration_str)
+
+                # 剪掉最后1秒
+                new_duration = max(0.1, duration - 1.0)  # 确保至少保留0.1秒
+
+                temp_video = str(output_dir / "ad_video_trimmed.mp4")
+                trim_cmd = [
+                    'ffmpeg', '-y', '-i', digital_human_video_path,
+                    '-t', str(new_duration),
+                    '-c', 'copy',  # 使用copy模式，快速无损
+                    temp_video
+                ]
+                subprocess.run(trim_cmd, check=True, capture_output=True)
+
+                # 替换原文件
+                import shutil
+                shutil.move(temp_video, digital_human_video_path)
+
+                logger.success(f"  ✓ 已移除末尾停顿 ({duration:.2f}s → {new_duration:.2f}s)")
+            except Exception as e:
+                logger.warning(f"  ⚠️  移除末尾停顿失败（不影响主流程）: {e}")
 
             # 完成
             logger.info("\n" + "=" * 60)

@@ -190,22 +190,22 @@ class LLMService:
         # 获取适合的模板
         template = ad_config.get_template(video_category)
 
-        # 根据语言设置长度要求
+        # 根据语言设置长度要求（控制在10秒左右，确保数字人生成时间合理）
         if language.startswith("zh") or language.startswith("cn"):
-            length_requirement = "15-30字"
+            length_requirement = "25-40字（1-2句话）"
             language_name = "中文"
         elif language.startswith("en"):
-            length_requirement = "5-15 words"
+            length_requirement = "20-30 words (1-2 sentences)"
             language_name = "English"
         elif language.startswith("ja"):
-            length_requirement = "15-30文字"
+            length_requirement = "25-40文字（1-2文）"
             language_name = "日本語"
         elif language.startswith("ko"):
-            length_requirement = "15-30자"
+            length_requirement = "25-40자（1-2문장）"
             language_name = "한국어"
         else:
             # 默认按中文处理
-            length_requirement = "15-30字"
+            length_requirement = "25-40字（1-2句话）"
             language_name = language
 
         # 构建提示词
@@ -225,6 +225,9 @@ Style guidelines:
 - Make it feel like a natural aside or helpful tip from a friend
 - Avoid corporate jargon or overly formal language"""
 
+        # 格式化卖点列表
+        selling_points_list = "\n".join([f"  • {point}" for point in ad_config.selling_points])
+
         user_prompt = f"""Video Context:
 - Theme: {video_theme}
 - Category: {video_category}
@@ -239,21 +242,30 @@ What comes next (after insertion point):
 
 {f'Suggested transition approach: {transition_hint}' if transition_hint else ''}
 
-Product to mention:
-- Name: {ad_config.product}
-- Key Benefits: {ad_config.get_selling_points_text()}
+Product to advertise:
+- Product Name: {ad_config.product}
+- Key Selling Points (MUST include 2-3 of these in the ad):
+{selling_points_list}
 
 ---
 
 Create a humorous, contextual ad script that:
 1. References something from the "before" context to create a smooth transition
 2. Adds humor, wit, or a clever connection to the video topic
-3. Naturally introduces {ad_config.product} as a solution or enhancement
-4. Keeps the tone consistent with the video ({video_tone})
-5. Length: {length_requirement}
-6. Language: {language_name} ONLY
+3. Naturally introduces {ad_config.product} with 1-2 SPECIFIC selling points from the list above
+4. Structure your ad as 1-2 sentences:
+   - Sentence 1: Smooth transition that references the video context + product introduction with key benefit
+   - Sentence 2 (optional): One more compelling benefit with engaging details
+5. Make the benefits sound exciting and valuable, not generic
+6. Keep the tone consistent with the video ({video_tone})
+7. Length: {length_requirement}
+8. Language: {language_name} ONLY
 
-Example approach: "Speaking of [topic from video]... you know what would make this even better? [Product benefit with a playful twist]"
+IMPORTANT: Be CONCISE. Focus on 1-2 most compelling selling points with concrete details.
+Don't just say "it's great" - explain WHY with actual benefits from the list.
+
+Example approach (English, ~25 words):
+"Speaking of [topic], try {ad_config.product} - [specific benefit with details]. [Optional: One more key advantage]."
 
 Return ONLY the ad script - no explanations, markers, or meta-commentary."""
 

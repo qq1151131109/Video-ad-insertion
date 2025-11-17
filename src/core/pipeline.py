@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
 import time
+import torch
 
 from src.core.video_processor import VideoProcessor
 from src.core.audio_separator import AudioSeparator
@@ -17,6 +18,7 @@ from src.services.llm_service import LLMService, InsertionPoint
 from src.config.ads import AdsManager
 from src.core.ad_orchestrator import AdVideoOrchestrator
 from src.core.video_composer import VideoComposer
+from src.services.video_upscaler import VideoUpscaler
 from src.utils.file_manager import TempFileManager
 from src.utils.logger import logger
 from src.config.settings import settings
@@ -58,6 +60,7 @@ class VideoPipeline:
         self.ads_manager = AdsManager()
         self.ad_orchestrator = AdVideoOrchestrator()
         self.video_composer = VideoComposer()
+        self.video_upscaler = VideoUpscaler()  # 视频超分处理器
 
         logger.success("✓ 流水线初始化完成")
 
@@ -148,6 +151,12 @@ class VideoPipeline:
 
                 logger.success(f"  ✓ 人声已分离: {Path(vocals_path).name}")
 
+                # 清理GPU显存（Demucs模型已使用完毕）
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    logger.debug("  ✓ GPU显存已清理")
+
                 # ============================================================
                 # 阶段2: 内容理解
                 # ============================================================
@@ -197,6 +206,12 @@ class VideoPipeline:
                 logger.info(f"  类别: {analysis.category}")
                 logger.info(f"  找到{len(analysis.insertion_points)}个插入点候选")
 
+                # 清理GPU显存（Whisper模型已使用完毕）
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    logger.debug("  ✓ GPU显存已清理")
+
                 # ============================================================
                 # 阶段2.5: 场景分析（新增）
                 # ============================================================
@@ -245,6 +260,25 @@ class VideoPipeline:
                     insertion_time = scene.speaker_profile.best_frame_time
                     insertion_point = analysis.insertion_points[0]  # 语义上仍用第一个点
 
+                    # 调整到句子边界
+                    original_time = insertion_time
+                    insertion_time, _ = self._adjust_insertion_to_sentence_boundary(
+                        insertion_time=insertion_time,
+                        transcription_segments=segments,
+                        tolerance=0.5
+                    )
+
+                    # 如果时间调整较大，重新提取关键帧
+                    if abs(insertion_time - original_time) > 1.0:
+                        cap = cv2.VideoCapture(str(video_path))
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        frame_number = int(insertion_time * fps) - 1
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_number))
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret:
+                            keyframe = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
                     logger.success(
                         f"✓ 使用主讲人最佳画面\n"
                         f"  时间: {insertion_time:.1f}s\n"
@@ -258,6 +292,29 @@ class VideoPipeline:
                         "  - 视频中未识别到主讲人\n"
                         "建议：请使用单人口播类型的视频"
                     )
+
+                # 调整插入时间到句子边界（避免切断句子）
+                logger.info("\n调整插入点到句子边界...")
+                original_time = insertion_time
+                insertion_time, adjust_reason = self._adjust_insertion_to_sentence_boundary(
+                    insertion_time=insertion_time,
+                    transcription_segments=segments,
+                    tolerance=0.5  # 0.5秒容差
+                )
+
+                # 如果时间调整较大（>1秒），需要重新提取关键帧
+                if abs(insertion_time - original_time) > 1.0:
+                    logger.info(f"  插入时间调整较大，重新提取关键帧...")
+                    cap = cv2.VideoCapture(str(video_path))
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    frame_number = int(insertion_time * fps) - 1
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_number))
+                    ret, frame = cap.read()
+                    cap.release()
+
+                    if ret:
+                        keyframe = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        logger.success(f"  ✓ 已重新提取关键帧 (第{frame_number}帧)")
 
                 logger.info(f"  最终插入时间: {insertion_time:.1f}秒")
                 logger.info(f"  理由: {insertion_point.reason}")
@@ -370,6 +427,38 @@ class VideoPipeline:
                 logger.success("✓ 数字人视频生成完成")
 
                 # ============================================================
+                # 阶段4.5: 视频超分（将数字人视频超分到原视频分辨率）
+                # ============================================================
+                logger.info("\n" + "=" * 80)
+                logger.info("阶段4.5: 视频超分")
+                logger.info("=" * 80)
+
+                logger.info("\n将数字人视频超分到原视频分辨率...")
+
+                # 获取原视频分辨率
+                original_width, original_height = self.video_upscaler.get_video_resolution(str(video_path))
+                logger.info(f"原视频分辨率: {original_width}x{original_height}")
+
+                # 获取数字人视频分辨率
+                dh_width, dh_height = self.video_upscaler.get_video_resolution(ad_result.digital_human_video_path)
+                logger.info(f"数字人视频分辨率: {dh_width}x{dh_height}")
+
+                # 超分输出路径
+                upscaled_ad_video_path = file_mgr.base_dir / "ad_video" / "digital_human_upscaled.mp4"
+
+                # 执行超分
+                upscaled_video = self.video_upscaler.upscale_to_match(
+                    input_video_path=ad_result.digital_human_video_path,
+                    reference_video_path=str(video_path),
+                    output_video_path=str(upscaled_ad_video_path),
+                    algorithm="lanczos",  # 使用高质量Lanczos算法
+                    crf=18,  # 高质量编码
+                    preset="medium"  # 平衡速度和质量
+                )
+
+                logger.success(f"✓ 视频超分完成: {original_width}x{original_height}")
+
+                # ============================================================
                 # 阶段5: 视频合成
                 # ============================================================
                 logger.info("\n" + "=" * 80)
@@ -380,11 +469,11 @@ class VideoPipeline:
 
                 final_output_path = output_dir / f"{video_id}_with_ad.mp4"
 
-                # 插入广告视频
+                # 插入超分后的广告视频
                 self.video_composer.insert_ad_video(
                     original_video_path=str(video_path),
-                    ad_video_path=ad_result.digital_human_video_path,
-                    insertion_time=insertion_point.time,
+                    ad_video_path=upscaled_video,  # 使用超分后的视频
+                    insertion_time=insertion_time,  # 使用调整后的时间
                     output_path=str(final_output_path)
                 )
 
@@ -409,7 +498,7 @@ class VideoPipeline:
                     processing_time=elapsed_time,
                     transcription_text=transcription.full_text,
                     video_theme=analysis.theme,
-                    insertion_time=insertion_point.time,
+                    insertion_time=insertion_time,  # 使用调整后的时间
                     ad_script=ad_script,
                     digital_human_video=ad_result.digital_human_video_path
                 )
@@ -481,6 +570,65 @@ class VideoPipeline:
         logger.info(f"平均: {total_time/len(results)/60:.1f}分钟/视频")
 
         return results
+
+    def _adjust_insertion_to_sentence_boundary(
+        self,
+        insertion_time: float,
+        transcription_segments: list,
+        tolerance: float = 0.5
+    ) -> tuple[float, str]:
+        """
+        将插入时间调整到最近的句子边界
+
+        Args:
+            insertion_time: LLM给出的插入时间
+            transcription_segments: ASR转录片段列表（带start/end时间戳）
+            tolerance: 容差范围（秒），如果插入点距离边界在此范围内则保持不变
+
+        Returns:
+            (调整后的时间, 调整说明)
+        """
+        # 找到插入点所在的segment
+        for i, seg in enumerate(transcription_segments):
+            seg_start = seg['start'] if isinstance(seg, dict) else seg.start
+            seg_end = seg['end'] if isinstance(seg, dict) else seg.end
+
+            if seg_start <= insertion_time <= seg_end:
+                # 插入点在句子中间
+                gap_to_start = insertion_time - seg_start
+                gap_to_end = seg_end - insertion_time
+
+                # 如果距离开头很近，调整到开头
+                if gap_to_start < tolerance:
+                    adjusted_time = seg_start
+                    reason = f"调整到句子开头 (原{insertion_time:.2f}s → {adjusted_time:.2f}s, 前移{gap_to_start:.2f}s)"
+                    logger.info(f"  {reason}")
+                    return adjusted_time, reason
+
+                # 如果距离结尾很近，调整到结尾
+                if gap_to_end < tolerance:
+                    adjusted_time = seg_end
+                    reason = f"调整到句子结尾 (原{insertion_time:.2f}s → {adjusted_time:.2f}s, 后移{gap_to_end:.2f}s)"
+                    logger.info(f"  {reason}")
+                    return adjusted_time, reason
+
+                # 在句子中间，需要选择调整方向
+                # 优先调整到前一句结尾（更自然的停顿）
+                if i > 0:
+                    prev_seg = transcription_segments[i-1]
+                    prev_end = prev_seg['end'] if isinstance(prev_seg, dict) else prev_seg.end
+                    adjusted_time = prev_end
+                    reason = f"调整到前一句结尾 (原{insertion_time:.2f}s → {adjusted_time:.2f}s, 避免切断当前句子)"
+                else:
+                    # 第一句，调整到句子开头
+                    adjusted_time = seg_start
+                    reason = f"调整到句子开头 (原{insertion_time:.2f}s → {adjusted_time:.2f}s)"
+
+                logger.warning(f"  ⚠️  插入点在句子中间，{reason}")
+                return adjusted_time, reason
+
+        # 插入点在句子之间（正常情况）
+        return insertion_time, "插入点已在句子边界，无需调整"
 
     def _select_insertion_with_speaker(
         self,

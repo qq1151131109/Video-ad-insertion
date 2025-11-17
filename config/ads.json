@@ -1,83 +1,93 @@
 {
   "ads": [
     {
-      "id": "nvidia_gpu",
-      "name": "NVIDIA算力",
-      "product": "NVIDIA GPU",
-      "category": "科技/算力",
+      "id": "aethir",
+      "name": "Aethir Distributed Cloud Computing",
+      "product": "Aethir Cloud Compute",
+      "category": "Technology/Cloud Computing",
       "enabled": true,
       "priority": 1,
-      "description": "NVIDIA GPU算力产品广告",
+      "description": "Aethir Distributed Cloud Computing Infrastructure - Enterprise-Grade GPU Network",
       "selling_points": [
-        "高性能AI算力",
-        "深度学习加速",
-        "训练速度提升10倍",
-        "专业级GPU性能",
-        "AI时代必备算力"
+        "Enterprise-grade GPU resources (H100, H200, A100, GB200)",
+        "80% cheaper than traditional cloud services",
+        "Global distributed network with low latency",
+        "On-demand access to high-performance computing resources",
+        "Suitable for AI training, inference, gaming, and rendering workloads",
+        "Decentralized ownership with full resource control"
       ],
       "target_scenarios": [
-        "AI开发",
-        "深度学习",
-        "模型训练",
-        "科技教程",
-        "编程教学"
+        "AI Development",
+        "Deep Learning",
+        "Model Training",
+        "Cloud Gaming",
+        "Real-time Rendering",
+        "Virtualized Computing",
+        "Technology Tutorials",
+        "Programming Education",
+        "Game Development"
       ],
       "templates": {
-        "科技类": [
-          "这得益于NVIDIA强大的算力支持，让AI训练事半功倍",
-          "NVIDIA GPU加速，让深度学习更高效",
-          "想要在AI领域领先，NVIDIA算力已成为标配"
+        "Technology": [
+          "For such high-performance computing needs, Aethir distributed cloud computing provides the perfect solution at just 20% the cost of traditional cloud services",
+          "Aethir's enterprise-grade GPU network makes AI training faster and more cost-effective",
+          "To stay ahead in AI, Aethir's H100/H200 computing resources are becoming the new choice"
         ],
-        "教育类": [
-          "学习AI，从NVIDIA算力开始",
-          "NVIDIA算力支持，让深度学习更简单",
-          "有了NVIDIA GPU，模型训练速度提升明显"
+        "Education": [
+          "Learn AI with Aethir's on-demand computing power, no expensive hardware investment required",
+          "Aethir distributed computing support makes deep learning more affordable",
+          "With Aethir's cloud GPUs, model training is faster and more cost-effective"
         ],
-        "创作类": [
-          "创作提速，NVIDIA算力助力",
-          "NVIDIA RTX，为AI创作者而生",
-          "用NVIDIA GPU，让AI创作更流畅"
+        "Creative": [
+          "Speed up your creative work with Aethir's low-latency computing for real-time rendering",
+          "Aethir cloud GPUs, built for AI creators and game developers",
+          "Use Aethir's distributed computing to make AI creation and game rendering smoother"
         ],
-        "通用": [
-          "NVIDIA算力，性能强劲",
-          "选择NVIDIA，选择强大算力",
-          "NVIDIA GPU，AI时代的引擎"
+        "Gaming": [
+          "Upgrade your cloud gaming experience with Aethir's global network delivering low-latency computing",
+          "Aethir makes high-end gaming accessible without expensive hardware",
+          "Distributed computing network for game rendering anytime, anywhere"
+        ],
+        "General": [
+          "Aethir, enterprise-grade GPU computing, available on-demand",
+          "Choose Aethir for powerful computing with 80% cost savings",
+          "Aethir distributed cloud computing, the new choice for computing power in the AI era"
         ]
       }
     },
     {
       "id": "cloud_service",
-      "name": "云计算服务",
-      "product": "XX云",
-      "category": "云服务",
+      "name": "Cloud Computing Service",
+      "product": "XX Cloud",
+      "category": "Cloud Service",
       "enabled": false,
       "priority": 2,
-      "description": "云计算服务广告（示例）",
+      "description": "Cloud computing service advertisement (example)",
       "selling_points": [
-        "弹性扩展",
-        "稳定可靠",
-        "成本优化",
-        "全球部署"
+        "Elastic scaling",
+        "Stable and reliable",
+        "Cost optimization",
+        "Global deployment"
       ],
       "target_scenarios": [
-        "技术分享",
-        "架构设计",
-        "运维教程"
+        "Technical sharing",
+        "Architecture design",
+        "DevOps tutorials"
       ],
       "templates": {
-        "技术类": [
-          "使用XX云，让部署更简单高效",
-          "XX云提供稳定的云计算服务"
+        "Technical": [
+          "Use XX Cloud for simpler and more efficient deployment",
+          "XX Cloud provides stable cloud computing services"
         ],
-        "通用": [
-          "XX云，值得信赖的云服务商"
+        "General": [
+          "XX Cloud, a trustworthy cloud service provider"
         ]
       }
     }
   ],
   "settings": {
-    "ad_script_style": "自然",
-    "ad_script_tone": "专业",
+    "ad_script_style": "natural",
+    "ad_script_tone": "professional",
     "context_awareness": true,
     "auto_select_template": true,
     "fallback_to_llm": true

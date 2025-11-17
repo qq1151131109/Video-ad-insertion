@@ -59,15 +59,18 @@ python scripts/test_workflows.py
 # 测试视频合成
 python scripts/test_video_composer.py
 
+# 测试视频超分（新增）
+python scripts/test_video_upscaler.py
+
 # 端到端测试（完整流程）
 python scripts/test_end_to_end.py
 ```
 
 ## 架构概览
 
-### 5阶段处理流水线 (`src/core/pipeline.py`)
+### 6阶段处理流水线 (`src/core/pipeline.py`)
 
-系统遵循严格的5阶段顺序流水线（阶段2.5为新增场景分析）：
+系统遵循严格的6阶段顺序流水线（阶段2.5为场景分析，阶段4.5为视频超分）：
 
 1. **视频分析** (`video_processor.py`, `audio_separator.py`)
    - 提取元数据（时长、分辨率、帧率）
@@ -90,6 +93,11 @@ python scripts/test_end_to_end.py
      2. 降级：如果LLM推荐点都没人脸，使用主讲人最佳帧
      3. 兜底：完全找不到合适人脸则报错
    - 综合评分：语义优先级(40%) + 人脸质量(60%)
+   - **插入点时间调整到句子边界**（新增）：
+     - 自动将LLM选择的时间调整到最近的ASR句子边界
+     - 避免在句子中间切断，确保插入点在自然停顿处
+     - 容差范围0.5秒：如果距离边界很近则微调，否则调整到前一句结尾
+     - 时间调整>1秒时自动重新提取关键帧
    - 从配置中选择匹配的广告
    - 使用LLM生成上下文相关的广告词
 
@@ -99,9 +107,14 @@ python scripts/test_end_to_end.py
      2. 声音克隆（IndexTTS2 - 克隆说话者声音，2次重试）
      3. 数字人视频（InfiniteTalk - 生成说话的数字人，2次重试）
 
+4.5. **视频超分** (`video_upscaler.py`) - 新增
+   - 获取原视频和数字人视频的分辨率
+   - 使用ffmpeg的Lanczos高质量算法将数字人视频超分到原视频分辨率
+   - 确保插入的广告视频与原视频分辨率匹配，避免质量损失
+
 5. **视频合成** (`video_composer.py`)
    - 在插入点分割原视频
-   - 插入数字人广告视频
+   - 插入超分后的数字人广告视频
    - 合并片段生成最终输出
 
 ### 核心服务架构
@@ -111,6 +124,9 @@ python scripts/test_end_to_end.py
   - **HTTP重试机制**: 5次重试，指数退避，处理5xx和连接错误
   - **连接管理**: 默认 `Connection: close` 避免keep-alive问题
   - **超时控制**: 默认30秒超时
+  - **GPU显存管理**: 每个workflow完成后自动清理本地和ComfyUI服务器端显存
+    - 本地清理: `torch.cuda.empty_cache()` + `torch.cuda.synchronize()`
+    - 服务器清理: POST `/free` API (unload_models + free_memory)
 - `image_cleaner.py`: Qwen Image Edit工作流封装
 - `voice_clone.py`: IndexTTS2工作流封装
 - `digital_human.py`: InfiniteTalk工作流封装
@@ -204,13 +220,15 @@ python scripts/test_end_to_end.py
 - 图片清洗：1-2分钟
 - 声音克隆：2-3分钟
 - 数字人生成：3-5分钟
+- 视频超分：30秒-1分钟（取决于分辨率差异）
 - 视频合成：30秒
-- **总计：8-15分钟**
+- **总计：9-17分钟**
 
 ### 关键依赖
 - **ComfyUI服务器必须运行**在配置的host:port上，用于阶段4
 - **需要GPU**用于Whisper（ASR）和Demucs（音频分离）- 可使用 `--device cpu` 但会显著变慢
 - **推荐NVIDIA GPU**，12GB+显存以获得最佳性能
+- **ffmpeg必须安装**用于视频超分（阶段4.5）- 大多数系统已预装
 
 ## 代码模式
 
@@ -335,7 +353,7 @@ client.download_file(file_info['filename'], output_path=save_path)
 ```
 src/
 ├── core/              # 核心业务逻辑
-│   ├── pipeline.py           # 主要的5阶段流水线
+│   ├── pipeline.py           # 主要的6阶段流水线
 │   ├── video_processor.py    # 视频/音频提取
 │   ├── audio_separator.py    # Demucs人声分离
 │   ├── asr.py               # Whisper转录
@@ -348,7 +366,8 @@ src/
 │   ├── llm_service.py       # OpenAI LLM封装
 │   ├── image_cleaner.py     # Qwen Image Edit服务
 │   ├── voice_clone.py       # IndexTTS2服务
-│   └── digital_human.py     # InfiniteTalk服务
+│   ├── digital_human.py     # InfiniteTalk服务
+│   └── video_upscaler.py    # 视频超分服务（ffmpeg）
 ├── models/            # 数据模型（Pydantic）
 │   └── video_models.py      # 视频元数据模型
 ├── utils/             # 工具函数

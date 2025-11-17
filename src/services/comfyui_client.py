@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, Tuple
 
 import requests
 from tqdm import tqdm
+import torch
 
 from src.config.settings import settings
 from src.utils.logger import logger
@@ -32,6 +33,34 @@ class ComfyUIClient:
         self.base_url = base_url or settings.comfyui_base_url
         self.session = requests.Session()
         logger.info(f"ComfyUI客户端初始化: {self.base_url}")
+
+    def clear_gpu_memory(self):
+        """
+        清理GPU显存（本地+ComfyUI服务器）
+
+        在每个workflow完成后调用，释放不再使用的显存
+        - 清理本地进程的GPU缓存
+        - 调用ComfyUI服务器的/free API释放服务器端显存
+        """
+        # 1. 清理本地GPU显存
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            logger.debug("  ✓ 本地GPU显存已清理")
+
+        # 2. 调用ComfyUI服务器的/free API清理服务器端显存
+        try:
+            response = self.session.post(
+                f"{self.base_url}/free",
+                json={"unload_models": True, "free_memory": True},
+                timeout=10
+            )
+            if response.status_code == 200:
+                logger.debug("  ✓ ComfyUI服务器显存已清理")
+            else:
+                logger.warning(f"  ⚠️  ComfyUI服务器显存清理失败: HTTP {response.status_code}")
+        except Exception as e:
+            logger.warning(f"  ⚠️  ComfyUI服务器显存清理失败: {e}")
 
     def upload_file(self, file_path: str, subfolder: str = "") -> Dict[str, str]:
         """
@@ -216,6 +245,10 @@ class ComfyUIClient:
                     logger.success(f"✓ 任务完成 (耗时: {elapsed:.1f}秒)")
                     if pbar:
                         pbar.close()
+
+                    # 清理GPU显存
+                    self.clear_gpu_memory()
+
                     return status.get('outputs', {})
 
                 elif status_info.get('status_str') == 'error':
