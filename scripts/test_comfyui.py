@@ -12,6 +12,7 @@ sys.path.insert(0, str(project_root))
 
 from src.services.comfyui_client import ComfyUIClient
 from src.utils.logger import logger
+from src.config.settings import settings
 
 
 def test_connection():
@@ -49,15 +50,15 @@ def test_workflow_loading():
     client = ComfyUIClient()
 
     workflows = {
-        "图片清洗": "docs/workflow/qwen_image_edit.json",
-        "声音克隆": "docs/workflow/index TTS2情绪控制_api_1013.json",
-        "数字人生成": "docs/workflow/InfiniteTalk数字人视频生视频_api.json",
+        "图片清洗": settings.get_workflow_path("image_edit"),
+        "声音克隆": settings.get_workflow_path("voice_clone"),
+        "数字人生成": settings.get_workflow_path("digital_human"),
     }
 
     success_count = 0
     for name, path in workflows.items():
         try:
-            workflow = client.load_workflow(path)
+            workflow = client.load_workflow(str(path))
             logger.success(f"✓ {name} - 配置加载成功 ({len(workflow)} 个节点)")
             success_count += 1
         except Exception as e:

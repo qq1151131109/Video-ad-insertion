@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # Workflow配置文件路径
     WORKFLOW_IMAGE_EDIT: str = "docs/workflow/qwen_image_edit-api-1114.json"
     WORKFLOW_VOICE_CLONE: str = "docs/workflow/index TTS2-1114-API.json"
-    WORKFLOW_DIGITAL_HUMAN: str = "docs/workflow/InfiniteTalk数字人-图生视频-API-1114.json"
+    WORKFLOW_DIGITAL_HUMAN: str = "docs/workflow/InfiniteTalk数字人图生视频-API-111604.json"
 
     # ==============================================================================
     # 日志配置

@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+from PIL import Image
+
 from src.services.comfyui_client import ComfyUIClient
 from src.config.settings import settings
 from src.utils.logger import logger
@@ -56,8 +58,8 @@ class DigitalHumanService:
         quality: str = "high",
         target_width: Optional[int] = None,  # 目标宽度（匹配原视频）
         target_height: Optional[int] = None,  # 目标高度（匹配原视频）
-        output_node_id: str = "307",  # VHS_VideoCombine节点
-        timeout: int = 600
+        output_node_id: str = "385",  # VHS_VideoCombine节点（111603版本）
+        timeout: int = 1200
     ) -> str:
         """
         生成数字人视频
@@ -88,7 +90,20 @@ class DigitalHumanService:
         if not audio_file.exists():
             raise FileNotFoundError(f"音频文件不存在: {audio_file}")
 
-        logger.info(f"开始生成数字人视频")
+        # 如果未显式提供目标分辨率，则从人脸图片自动推断
+        if target_width is None or target_height is None:
+            try:
+                with Image.open(face_path) as img:
+                    img_width, img_height = img.size
+                if target_width is None:
+                    target_width = img_width
+                if target_height is None:
+                    target_height = img_height
+                logger.info(f"自动推断目标分辨率: {target_width}x{target_height}")
+            except Exception as e:
+                logger.warning(f"无法从图片推断分辨率，将使用workflow默认设置: {e}")
+
+        logger.info("开始生成数字人视频")
         logger.info(f"人脸图片: {face_path.name}")
         logger.info(f"音频文件: {audio_file.name}")
         logger.info(f"参数: fps={fps}, quality={quality}")
@@ -133,7 +148,7 @@ class DigitalHumanService:
                 output_node_id=output_node_id,
                 output_path=str(output_path),
                 timeout=timeout,
-                file_type='gifs'  # 数字人workflow输出GIF格式视频
+                file_type='gifs'  # VHS_VideoCombine节点使用'gifs'作为输出键（即使是MP4格式）
             )
 
             logger.success(f"✓ 数字人视频生成完成: {output_path.name}")
@@ -156,11 +171,11 @@ class DigitalHumanService:
         """
         准备workflow（替换参数）
 
-        根据新的workflow结构（InfiniteTalk数字人图生视频-API-111502.json）：
-        - 节点326: LoadImage - 输入图片
-        - 节点125: LoadAudio - 输入音频
-        - 节点306: MultiTalkWav2VecEmbeds - fps参数
-        - 节点307: VHS_VideoCombine - frame_rate参数
+        根据最新workflow结构（InfiniteTalk数字人图生视频-API-111604.json）：
+        - LoadImage: 输入图片
+        - LoadAudio: 输入音频
+        - MultiTalkWav2VecEmbeds: fps参数
+        - VHS_VideoCombine: frame_rate参数
 
         Args:
             image_filename: 上传后的图片文件名
@@ -236,6 +251,21 @@ class DigitalHumanService:
                     node["inputs"]["scale_to_length"] = scale_to_length
                     logger.info(f"设置图片缩放尺寸: {scale_to_length} (原{target_width}x{target_height})")
 
+            # WanVideoImageToVideoMultiTalk节点 - 启用色彩匹配（修复渐进式变暗）
+            elif class_type == "WanVideoImageToVideoMultiTalk":
+                if "inputs" in node:
+                    # 启用最强色彩匹配以保持81帧的色彩一致性
+                    # hm-mvgd-hm: 组合Histogram Matching和MVGD，最强的色彩一致性保证
+                    node["inputs"]["colormatch"] = "hm-mvgd-hm"
+                    logger.info(f"✓ 启用色彩匹配: hm-mvgd-hm (节点{node_id}) - 防止渐进式变暗")
+
+            # WanVideoDecode节点 - 优化归一化设置（修复VAE解码色彩衰减）
+            elif class_type == "WanVideoDecode":
+                if "inputs" in node:
+                    # 使用minmax归一化以更严格控制亮度范围
+                    node["inputs"]["normalization"] = "minmax"
+                    logger.info(f"✓ 优化VAE归一化: minmax (节点{node_id}) - 保持亮度稳定性")
+
         return workflow
 
     def generate_video_simple(
@@ -243,7 +273,7 @@ class DigitalHumanService:
         face_image_path: str,
         audio_path: str,
         output_video_path: str,
-        timeout: int = 600
+        timeout: int = 1200
     ) -> str:
         """
         简化的数字人生成接口（使用默认参数）
